@@ -4,7 +4,7 @@ import { uniform, storage, textureStore, globalId, texture, sampler } from 'thre
 import { queuedRayStruct, queuedHitStruct } from './structs.js';
 import { proxy, proxyFn, wgslTagFn } from 'three-mesh-bvh/webgpu';
 import { weightedAlphaBlendFn } from '../../nodes/sampling.wgsl.js';
-import { isTerminatingScatterFunc } from '../../nodes/utils.wgsl.js';
+import { clampPathContributionFunc, isTerminatingScatterFunc } from '../../nodes/utils.wgsl.js';
 import { rngInit } from '../../nodes/random.wgsl.js';
 
 export class ProcessHitsKernel extends ComputeKernel {
@@ -22,6 +22,8 @@ export class ProcessHitsKernel extends ComputeKernel {
 			// settings
 			smoothNormals: uniform( 1 ),
 			bounces: uniform( 1 ),
+			clampDirect: uniform( 0 ),
+			clampIndirect: uniform( 0 ),
 
 			// rays
 			rayQueue: storage( new IndirectStorageBufferAttribute( 1, queuedRayStruct.getLength() ), queuedRayStruct ),
@@ -44,6 +46,8 @@ export class ProcessHitsKernel extends ComputeKernel {
 				// settings
 				smoothNormals: u32,
 				bounces: u32,
+				clampDirect: f32,
+				clampIndirect: f32,
 
 				globalId: vec3u
 			) -> void {
@@ -88,7 +92,8 @@ export class ProcessHitsKernel extends ComputeKernel {
 
 				let scatterRec = ${ bsdfSampleFn }( input.view, surface );
 
-				let resultColor = input.resultColor + vec4f( input.throughputColor * surface.emission, 0.0 );
+				let emission = ${ clampPathContributionFunc }( input.throughputColor * surface.emission, input.currentBounce, clampDirect, clampIndirect );
+				let resultColor = input.resultColor + vec4f( emission, 0.0 );
 
 				let isTerminated = input.currentBounce >= bounces || ${ isTerminatingScatterFunc }( scatterRec );
 

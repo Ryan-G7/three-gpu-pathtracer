@@ -104,6 +104,8 @@ export class MegaKernelPathTracer extends PathTracerBackend {
 			outputTarget,
 			sampleCountTarget,
 			lowResMode,
+			clampDirect,
+			clampIndirect
 		} = this;
 
 		// init parameters
@@ -111,6 +113,8 @@ export class MegaKernelPathTracer extends PathTracerBackend {
 		kernel.sampleCountTarget = sampleCountTarget;
 
 		kernel.bounces = bounces;
+		kernel.clampDirect = clampDirect;
+		kernel.clampIndirect = clampIndirect;
 
 		while ( true ) {
 

@@ -226,8 +226,15 @@ export class WaveFrontPathTracer extends PathTracerBackend {
 			updateRayQueueParamsKernel,
 			hitProcessKernel,
 
-			lowResMode
+			lowResMode,
+			clampDirect,
+			clampIndirect,
 		} = this;
+
+		rayIntersectionKernel.clampDirect = clampDirect;
+		rayIntersectionKernel.clampIndirect = clampIndirect;
+		hitProcessKernel.clampDirect = clampDirect;
+		hitProcessKernel.clampIndirect = clampIndirect;
 
 		primeRayGenerationDispatchKernel.tileOffset = 0;
 

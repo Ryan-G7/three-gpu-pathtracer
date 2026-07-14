@@ -4,7 +4,7 @@ import { texture, sampler, uniform, globalId, textureStore } from 'three/tsl';
 import { rngInit, rngNextBounce, rand2, RNG_INDEX_RAY_JITTER, RNG_INDEX_ENVIRONMENT_SAMPLE } from '../nodes/random.wgsl.js';
 import { sampleEnvironmentFn, weightedAlphaBlendFn } from '../nodes/sampling.wgsl.js';
 import { proxy, proxyFn, wgslTagFn } from 'three-mesh-bvh/webgpu';
-import { isTerminatingScatterFunc } from '../nodes/utils.wgsl.js';
+import { clampPathContributionFunc, isTerminatingScatterFunc } from '../nodes/utils.wgsl.js';
 
 export class PathTracerMegaKernel extends ComputeKernel {
 
@@ -22,6 +22,8 @@ export class PathTracerMegaKernel extends ComputeKernel {
 			tileSize: uniform( new Vector2() ),
 			seed: uniform( 0 ),
 			bounces: uniform( 5 ),
+			clampDirect: uniform( 0 ),
+			clampIndirect: uniform( 0 ),
 
 			// environment
 			envMap: texture( new DataTexture() ),
@@ -63,6 +65,8 @@ export class PathTracerMegaKernel extends ComputeKernel {
 				// settings
 				seed: u32,
 				bounces: u32,
+				clampDirect: f32,
+				clampIndirect: f32,
 
 				// environment
 				envMap: texture_2d<f32>,
@@ -140,7 +144,8 @@ export class PathTracerMegaKernel extends ComputeKernel {
 
 						let surface = ${ getSurfaceRecordFn }( material, vertexData, hitResult.side, hitResult.normal );
 
-						resultColor += vec4f( throughputColor * surface.emission, 0.0 );
+						let emission = ${ clampPathContributionFunc }( throughputColor * surface.emission, bounce, clampDirect, clampIndirect );
+						resultColor += vec4f( emission, 0.0 );
 
 						let scatterRec = ${ bsdfSampleFn }( - ray.direction, surface );
 
@@ -164,7 +169,8 @@ export class PathTracerMegaKernel extends ComputeKernel {
 						let rng = ${ rand2 }( ${ RNG_INDEX_ENVIRONMENT_SAMPLE } );
 						if ( bounce > 0u ) {
 
-							resultColor += ${ sampleEnvironmentFn }( envMap, envMapSampler, envInfo, ray.direction, rng ) * vec4f( throughputColor, 0.0 );
+							let environment = ${ sampleEnvironmentFn }( envMap, envMapSampler, envInfo, ray.direction, rng ).rgb * throughputColor;
+							resultColor += vec4f( ${ clampPathContributionFunc }( environment, bounce, clampDirect, clampIndirect ), 0.0 );
 
 						} else {
 

@@ -123,6 +123,32 @@ export class WebGPUPathTracer {
 
 	}
 
+	get clampDirect() {
+
+		return this._pathTracer.clampDirect;
+
+	}
+
+	set clampDirect( v ) {
+
+		this._pathTracer.clampDirect = Math.max( 0, v );
+		this._pathTracer.reset();
+
+	}
+
+	get clampIndirect() {
+
+		return this._pathTracer.clampIndirect;
+
+	}
+
+	set clampIndirect( v ) {
+
+		this._pathTracer.clampIndirect = Math.max( 0, v );
+		this._pathTracer.reset();
+
+	}
+
 	get samples() {
 
 		return this._pathTracer.samples;
@@ -163,8 +189,11 @@ export class WebGPUPathTracer {
 
 	useMegakernel( value ) {
 
+		const { clampDirect, clampIndirect } = this._pathTracer;
 		this._pathTracer.dispose();
 		this._pathTracer = value ? new MegaKernelPathTracer( this._renderer ) : new WaveFrontPathTracer( this._renderer );
+		this._pathTracer.clampDirect = clampDirect;
+		this._pathTracer.clampIndirect = clampIndirect;
 		this._pathTracer.setBVHData( this._bvhData );
 		this._pathTracer.setMaterial( this.material );
 		this.setCamera( this.camera );

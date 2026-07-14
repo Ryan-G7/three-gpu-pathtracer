@@ -9,6 +9,10 @@ export class PathTracerBackend {
 		this.renderer = renderer;
 		this.samples = 0;
 		this.bounces = 7;
+		// A value of 0 disables clamping. Contributions after one surface scatter
+		// use clampDirect; contributions after two or more use clampIndirect.
+		this.clampDirect = 0;
+		this.clampIndirect = 0;
 		this.lowResMode = false;
 
 		this._renderTask = null;

@@ -142,6 +142,38 @@ export const isTerminatingScatterFunc = wgslFn( /* wgsl */ `
 
 `, [ scatterRecordStruct ] );
 
+// Camera-visible emission and background are left untouched. A contribution
+// reached after one scatter is direct light; later ones are indirect light.
+export const clampPathContributionFunc = wgslFn( /* wgsl */ `
+
+	fn clampPathContribution( contribution: vec3f, bounce: u32, clampDirect: f32, clampIndirect: f32 ) -> vec3f {
+
+		if ( bounce == 0u ) {
+
+			return contribution;
+
+		}
+
+		var limit = clampIndirect;
+		if ( bounce == 1u ) {
+
+			limit = clampDirect;
+
+		}
+
+		if ( limit <= 0.0 ) {
+
+			return contribution;
+
+		}
+
+		let luminance = dot( max( contribution, vec3f( 0.0 ) ), vec3f( 0.2126, 0.7152, 0.0722 ) );
+		return select( contribution, contribution * ( limit / max( luminance, 1e-6 ) ), luminance > limit );
+
+	}
+
+` );
+
 export const applyWrapFunc = wgslFn( /* wgsl */ `
 
 	fn applyWrap( v: f32, wrapMode: i32 ) -> f32 {
@@ -218,4 +250,3 @@ export const sampleTexelFunc = ( textureInfoUniform, atlas, atlasSampler ) => wg
 
 	}
 `;
-

@@ -5,6 +5,7 @@ import { rngInit, rand2, RNG_INDEX_ENVIRONMENT_SAMPLE } from '../../nodes/random
 import { queuedRayStruct, queuedHitStruct } from './structs.js';
 import { proxy, wgslTagFn } from 'three-mesh-bvh/webgpu';
 import { sampleEnvironmentFn, weightedAlphaBlendFn } from '../../nodes/sampling.wgsl.js';
+import { clampPathContributionFunc } from '../../nodes/utils.wgsl.js';
 
 export class RayIntersectionKernel extends ComputeKernel {
 
@@ -34,6 +35,9 @@ export class RayIntersectionKernel extends ComputeKernel {
 			backgroundIntensity: uniform( 1 ),
 			backgroundBlurriness: uniform( 0 ),
 
+			clampDirect: uniform( 0 ),
+			clampIndirect: uniform( 0 ),
+
 			globalId: globalId,
 		};
 
@@ -54,6 +58,9 @@ export class RayIntersectionKernel extends ComputeKernel {
 				backgroundRotation: mat3x3f,
 				backgroundIntensity: f32,
 				backgroundBlurriness: f32,
+
+				clampDirect: f32,
+				clampIndirect: f32,
 
 				globalId: vec3u
 			) -> void {
@@ -117,7 +124,8 @@ export class RayIntersectionKernel extends ComputeKernel {
 					var resultColor = input.resultColor;
 					if ( input.currentBounce > 0u ) {
 
-						resultColor += ${ sampleEnvironmentFn }( envMap, envMapSampler, envInfo, input.direction, rng ) * vec4f( input.throughputColor, 0.0 );
+						let environment = ${ sampleEnvironmentFn }( envMap, envMapSampler, envInfo, input.direction, rng ).rgb * input.throughputColor;
+						resultColor += vec4f( ${ clampPathContributionFunc }( environment, input.currentBounce, clampDirect, clampIndirect ), 0.0 );
 
 					} else {
 
