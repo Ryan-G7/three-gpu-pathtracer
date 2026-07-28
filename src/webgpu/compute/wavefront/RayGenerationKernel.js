@@ -84,6 +84,7 @@ export class RayGenerationKernel extends ComputeKernel {
 
 				rayQueue[ index ].origin = ray.origin;
 				rayQueue[ index ].direction = ray.direction;
+				rayQueue[ index ].pdf = 0.0;
 				rayQueue[ index ].pixel = indexUV;
 				rayQueue[ index ].throughputColor = vec3f( 1.0 );
 				rayQueue[ index ].currentBounce = 0;

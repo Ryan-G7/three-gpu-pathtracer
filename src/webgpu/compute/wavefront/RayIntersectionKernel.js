@@ -4,7 +4,7 @@ import { uniform, texture, sampler, storage, textureStore, globalId } from 'thre
 import { rngInit, rand2, RNG_INDEX_ENVIRONMENT_SAMPLE } from '../../nodes/random.wgsl.js';
 import { queuedRayStruct, queuedHitStruct } from './structs.js';
 import { proxy, wgslTagFn } from 'three-mesh-bvh/webgpu';
-import { sampleEnvironmentFn, weightedAlphaBlendFn } from '../../nodes/sampling.wgsl.js';
+import { environmentDirectionPdfFn, misHeuristicFn, sampleEnvironmentFn, weightedAlphaBlendFn } from '../../nodes/sampling.wgsl.js';
 
 export class RayIntersectionKernel extends ComputeKernel {
 
@@ -25,6 +25,7 @@ export class RayIntersectionKernel extends ComputeKernel {
 			// environment
 			envMap: texture( new DataTexture() ),
 			envMapSampler: sampler( new DataTexture() ),
+			envTotalSum: uniform( 0 ),
 			envMapRotation: uniform( new Matrix3() ),
 			envMapIntensity: uniform( 1 ),
 
@@ -46,6 +47,7 @@ export class RayIntersectionKernel extends ComputeKernel {
 				// environment
 				envMap: texture_2d<f32>,
 				envMapSampler: sampler,
+				envTotalSum: f32,
 				envMapRotation: mat3x3f,
 				envMapIntensity: f32,
 
@@ -115,7 +117,9 @@ export class RayIntersectionKernel extends ComputeKernel {
 					var resultColor = input.resultColor;
 					if ( input.currentBounce > 0u ) {
 
-						resultColor += ${ sampleEnvironmentFn }( envMap, envMapSampler, envInfo, input.direction, rng ) * vec4f( input.throughputColor, 0.0 );
+						let envPdf = ${ environmentDirectionPdfFn }( envMap, envMapSampler, envInfo, envTotalSum, input.direction );
+						let misWeight = ${ misHeuristicFn }( input.pdf, envPdf );
+						resultColor += ${ sampleEnvironmentFn }( envMap, envMapSampler, envInfo, input.direction, rng ) * vec4f( input.throughputColor * misWeight, 0.0 );
 
 					} else {
 

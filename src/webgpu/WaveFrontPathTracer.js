@@ -104,19 +104,29 @@ export class WaveFrontPathTracer extends PathTracerBackend {
 
 	setEnvironment( envMap ) {
 
-		const { rayIntersectionKernel, envInfo } = this;
+		const { rayIntersectionKernel, hitProcessKernel, envInfo } = this;
 		envInfo.updateFrom( envMap );
+
 		rayIntersectionKernel.envMap = envInfo.map;
+		rayIntersectionKernel.envTotalSum = envInfo.totalSum;
 		rayIntersectionKernel.kernel.computeNode.parameters.envMapSampler.node.value = envInfo.map;
+
+		hitProcessKernel.envMap = envInfo.map;
+		hitProcessKernel.envMarginalWeights = envInfo.marginalWeights;
+		hitProcessKernel.envConditionalWeights = envInfo.conditionalWeights;
+		hitProcessKernel.envTotalSum = envInfo.totalSum;
+		hitProcessKernel.kernel.computeNode.parameters.envMapSampler.node.value = envInfo.map;
 
 	}
 
 	setEnvironmentParams( envMapIntensity, envMapRotation ) {
 
-		const { rayIntersectionKernel } = this;
+		const { rayIntersectionKernel, hitProcessKernel } = this;
 		const rotationMatrix = new Matrix4().makeRotationFromEuler( envMapRotation ).invert();
 		rayIntersectionKernel.envMapRotation.setFromMatrix4( rotationMatrix );
 		rayIntersectionKernel.envMapIntensity = envMapIntensity;
+		hitProcessKernel.envMapRotation.setFromMatrix4( rotationMatrix );
+		hitProcessKernel.envMapIntensity = envMapIntensity;
 
 	}
 
@@ -322,8 +332,7 @@ export class WaveFrontPathTracer extends PathTracerBackend {
 				renderer.compute( hitProcessKernel.kernel, hitProcessKernel.getDispatchSize( processed, 1, 1 ) );
 				// Note: hit queue size ([2] and [3]) is reset at the top of the next iteration by PrimeRayGenerationDispatchKernel
 
-				// Step 4: connect to lights
-				// TODO
+				// TODO: connect to punctual and emissive mesh lights
 
 				// Future
 				// - track variance to skip rays

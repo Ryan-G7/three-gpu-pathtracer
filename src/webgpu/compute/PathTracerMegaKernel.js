@@ -1,8 +1,8 @@
 import { DataTexture, Matrix3, Vector2, StorageTexture } from 'three/webgpu';
 import { ComputeKernel } from './ComputeKernel.js';
 import { texture, sampler, uniform, globalId, textureStore } from 'three/tsl';
-import { rngInit, rngNextBounce, rand2, RNG_INDEX_RAY_JITTER, RNG_INDEX_ENVIRONMENT_SAMPLE } from '../nodes/random.wgsl.js';
-import { sampleEnvironmentFn, weightedAlphaBlendFn } from '../nodes/sampling.wgsl.js';
+import { rngInit, rngNextBounce, rand2, RNG_INDEX_RAY_JITTER, RNG_INDEX_ENVIRONMENT_SAMPLE, RNG_INDEX_ENVIRONMENT_LIGHT } from '../nodes/random.wgsl.js';
+import { environmentDirectionPdfFn, misHeuristicFn, sampleEnvironmentDirectionFn, sampleEnvironmentFn, weightedAlphaBlendFn } from '../nodes/sampling.wgsl.js';
 import { proxy, proxyFn, wgslTagFn } from 'three-mesh-bvh/webgpu';
 import { isTerminatingScatterFunc, offsetRayOriginFunc } from '../nodes/utils.wgsl.js';
 
@@ -26,6 +26,9 @@ export class PathTracerMegaKernel extends ComputeKernel {
 			// environment
 			envMap: texture( new DataTexture() ),
 			envMapSampler: sampler( new DataTexture() ),
+			envMarginalWeights: texture( new DataTexture() ),
+			envConditionalWeights: texture( new DataTexture() ),
+			envTotalSum: uniform( 0 ),
 			envMapRotation: uniform( new Matrix3() ),
 			envMapIntensity: uniform( 1 ),
 
@@ -48,6 +51,7 @@ export class PathTracerMegaKernel extends ComputeKernel {
 		const getSurfaceRecordFn = proxyFn( 'bvhData.value.fns.getSurfaceRecord', params );
 		const getCameraRayFn = proxyFn( 'bvhData.value.fns.getCameraRay', params );
 		const bsdfSampleFn = proxyFn( 'material.value.bsdfSample', params );
+		const bsdfEvalFn = proxyFn( 'material.value.bsdfEval', params );
 
 		const shader = wgslTagFn/* wgsl */`
 
@@ -67,6 +71,9 @@ export class PathTracerMegaKernel extends ComputeKernel {
 				// environment
 				envMap: texture_2d<f32>,
 				envMapSampler: sampler,
+				envMarginalWeights: texture_2d<f32>,
+				envConditionalWeights: texture_2d<f32>,
+				envTotalSum: f32,
 				envMapRotation: mat3x3f,
 				envMapIntensity: f32,
 
@@ -119,6 +126,7 @@ export class PathTracerMegaKernel extends ComputeKernel {
 
 				var resultColor = vec4f( 0, 0, 0, 1 );
 				var throughputColor = vec3f( 1.0 );
+				var lastScatterPdf = 0.0;
 
 				for ( var bounce = 0u; bounce < bounces; bounce ++ ) {
 
@@ -140,6 +148,26 @@ export class PathTracerMegaKernel extends ComputeKernel {
 
 						resultColor += vec4f( throughputColor * surface.emission, 0.0 );
 
+						let envSample = ${ sampleEnvironmentDirectionFn }(
+							envMap, envMapSampler, envMarginalWeights, envConditionalWeights,
+							envInfo, envTotalSum, ${ rand2 }( ${ RNG_INDEX_ENVIRONMENT_LIGHT } )
+						);
+						let envBsdf = ${ bsdfEvalFn }( - ray.direction, envSample.direction, surface );
+						let orientedNormal = hitResult.normal * hitResult.side;
+						if ( envSample.pdf > 0.0 && envBsdf.pdf > 0.0 && dot( envSample.direction, orientedNormal ) > 0.0 ) {
+
+							let shadowOrigin = ${ offsetRayOriginFunc }( vertexData.position.xyz, envSample.direction, hitResult.normal );
+							let shadowRay = Ray( shadowOrigin, envSample.direction );
+							var shadowHit: ${ raycastOutput };
+							if ( ! ${ raycastFirstHitFn }( shadowRay, &shadowHit ) ) {
+
+								let misWeight = ${ misHeuristicFn }( envSample.pdf, envBsdf.pdf );
+								resultColor += vec4f( throughputColor * envSample.color * envBsdf.color * misWeight / envSample.pdf, 0.0 );
+
+							}
+
+						}
+
 						let scatterRec = ${ bsdfSampleFn }( - ray.direction, surface );
 
 						if ( ${ isTerminatingScatterFunc }( scatterRec ) ) {
@@ -150,6 +178,7 @@ export class PathTracerMegaKernel extends ComputeKernel {
 
 						throughputColor *= scatterRec.color;
 						throughputColor /= scatterRec.pdf;
+						lastScatterPdf = scatterRec.pdf;
 
 						ray.origin = ${ offsetRayOriginFunc }( vertexData.position.xyz, scatterRec.direction, hitResult.normal );
 						ray.direction = scatterRec.direction;
@@ -159,7 +188,9 @@ export class PathTracerMegaKernel extends ComputeKernel {
 						let rng = ${ rand2 }( ${ RNG_INDEX_ENVIRONMENT_SAMPLE } );
 						if ( bounce > 0u ) {
 
-							resultColor += ${ sampleEnvironmentFn }( envMap, envMapSampler, envInfo, ray.direction, rng ) * vec4f( throughputColor, 0.0 );
+							let envPdf = ${ environmentDirectionPdfFn }( envMap, envMapSampler, envInfo, envTotalSum, ray.direction );
+							let misWeight = ${ misHeuristicFn }( lastScatterPdf, envPdf );
+							resultColor += ${ sampleEnvironmentFn }( envMap, envMapSampler, envInfo, ray.direction, rng ) * vec4f( throughputColor * misWeight, 0.0 );
 
 						} else {
 

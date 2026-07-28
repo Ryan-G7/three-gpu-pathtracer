@@ -1,5 +1,5 @@
 import { wgslFn } from 'three/tsl';
-import { environmentInfoStruct, constants, lobeWeightsStruct } from './structs.wgsl.js';
+import { environmentInfoStruct, environmentSampleStruct, constants, lobeWeightsStruct } from './structs.wgsl.js';
 import { evaluateFresnelFunc, iorToF0Func, schlickFresnelFunc } from './utils.wgsl.js';
 
 /*
@@ -102,6 +102,110 @@ const sampleEquirectColorFn = wgslFn( /* wgsl */ `
 	}
 
 `, [ equirectDirectionToUvFn ] );
+
+const equirectUvToDirectionFn = wgslFn( /* wgsl */ `
+
+	fn equirectUvToDirection( uv: vec2f ) -> vec3f {
+
+		let phi = ( uv.x - 0.5 ) * 2.0 * PI;
+		let theta = ( 1.0 - uv.y ) * PI;
+		let sinTheta = sin( theta );
+		return vec3f( cos( phi ) * sinTheta, cos( theta ), sin( phi ) * sinTheta );
+
+	}
+
+`, [ constants ] );
+
+const luminanceFn = wgslFn( /* wgsl */ `
+
+	fn luminance( color: vec3f ) -> f32 {
+
+		return dot( color, vec3f( 0.2126, 0.7152, 0.0722 ) );
+
+	}
+
+` );
+
+export const environmentDirectionPdfFn = wgslFn( /* wgsl */ `
+
+	fn environmentDirectionPdf(
+		envMap: texture_2d<f32>,
+		envMapSampler: sampler,
+		env: EnvironmentInfo,
+		totalSum: f32,
+		direction: vec3f,
+	) -> f32 {
+
+		if ( totalSum == 0.0 || env.intensity == 0.0 ) {
+
+			return 0.0;
+
+		}
+
+		let localDirection = env.rotation * direction;
+		let uv = equirectDirectionToUv( localDirection );
+		let sinTheta = sin( uv.y * PI );
+		if ( sinTheta == 0.0 ) {
+
+			return 0.0;
+
+		}
+
+		let color = sampleEquirectColor( envMap, envMapSampler, localDirection ).rgb;
+		let dimensions = textureDimensions( envMap );
+		let pixelPdf = luminance( color ) / totalSum;
+		return f32( dimensions.x * dimensions.y ) * pixelPdf / ( 2.0 * PI * PI * sinTheta );
+
+	}
+
+`, [ constants, environmentInfoStruct, equirectDirectionToUvFn, sampleEquirectColorFn, luminanceFn ] );
+
+export const sampleEnvironmentDirectionFn = wgslFn( /* wgsl */ `
+
+	fn sampleEnvironmentDirection(
+		envMap: texture_2d<f32>,
+		envMapSampler: sampler,
+		marginalWeights: texture_2d<f32>,
+		conditionalWeights: texture_2d<f32>,
+		env: EnvironmentInfo,
+		totalSum: f32,
+		r: vec2f,
+	) -> EnvironmentSample {
+
+		var result: EnvironmentSample;
+		result.color = vec3f( 0.0 );
+		result.direction = vec3f( 0.0, 1.0, 0.0 );
+		result.pdf = 0.0;
+		if ( totalSum == 0.0 || env.intensity == 0.0 ) {
+
+			return result;
+
+		}
+
+		let v = textureSampleLevel( marginalWeights, envMapSampler, vec2f( r.x, 0.5 ), 0.0 ).r;
+		let u = textureSampleLevel( conditionalWeights, envMapSampler, vec2f( r.y, v ), 0.0 ).r;
+		let localDirection = equirectUvToDirection( vec2f( u, v ) );
+
+		result.color = env.intensity * sampleEquirectColor( envMap, envMapSampler, localDirection ).rgb;
+		result.direction = normalize( transpose( env.rotation ) * localDirection );
+		result.pdf = environmentDirectionPdf( envMap, envMapSampler, env, totalSum, result.direction );
+		return result;
+
+	}
+
+`, [ environmentSampleStruct, environmentInfoStruct, equirectUvToDirectionFn, sampleEquirectColorFn, environmentDirectionPdfFn ] );
+
+export const misHeuristicFn = wgslFn( /* wgsl */ `
+
+	fn misHeuristic( a: f32, b: f32 ) -> f32 {
+
+		let a2 = a * a;
+		let b2 = b * b;
+		return a2 / ( a2 + b2 );
+
+	}
+
+` );
 
 const sampleHemisphereFn = wgslFn( /* wgsl */ `
 

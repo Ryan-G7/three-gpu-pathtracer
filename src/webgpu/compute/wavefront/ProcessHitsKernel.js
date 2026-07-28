@@ -1,11 +1,11 @@
-import { IndirectStorageBufferAttribute, StorageTexture, DataTexture } from 'three/webgpu';
+import { IndirectStorageBufferAttribute, Matrix3, StorageTexture, DataTexture } from 'three/webgpu';
 import { ComputeKernel } from '../ComputeKernel.js';
 import { uniform, storage, textureStore, globalId, texture, sampler } from 'three/tsl';
 import { queuedRayStruct, queuedHitStruct } from './structs.js';
 import { proxy, proxyFn, wgslTagFn } from 'three-mesh-bvh/webgpu';
-import { weightedAlphaBlendFn } from '../../nodes/sampling.wgsl.js';
+import { misHeuristicFn, sampleEnvironmentDirectionFn, weightedAlphaBlendFn } from '../../nodes/sampling.wgsl.js';
 import { isTerminatingScatterFunc, offsetRayOriginFunc } from '../../nodes/utils.wgsl.js';
-import { rngInit } from '../../nodes/random.wgsl.js';
+import { rand2, rngInit, RNG_INDEX_ENVIRONMENT_LIGHT } from '../../nodes/random.wgsl.js';
 
 export class ProcessHitsKernel extends ComputeKernel {
 
@@ -31,12 +31,24 @@ export class ProcessHitsKernel extends ComputeKernel {
 			textures: texture( new DataTexture() ),
 			textureSampler: sampler( new DataTexture() ),
 
+			// environment
+			envMap: texture( new DataTexture() ),
+			envMapSampler: sampler( new DataTexture() ),
+			envMarginalWeights: texture( new DataTexture() ),
+			envConditionalWeights: texture( new DataTexture() ),
+			envTotalSum: uniform( 0 ),
+			envMapRotation: uniform( new Matrix3() ),
+			envMapIntensity: uniform( 1 ),
+
 			globalId: globalId,
 		};
 
+		const raycastOutput = proxy( 'bvhData.value.fns.raycastFirstHit.outputType', params );
+		const raycastFirstHitFn = proxyFn( 'bvhData.value.fns.raycastFirstHit', params );
 		const sampleTrianglePointFn = proxyFn( 'bvhData.value.fns.sampleTrianglePoint', params );
 		const getSurfaceRecordFn = proxyFn( 'bvhData.value.fns.getSurfaceRecord', params );
 		const bsdfSampleFn = proxyFn( 'material.value.bsdfSample', params );
+		const bsdfEvalFn = proxyFn( 'material.value.bsdfEval', params );
 
 		const fn = wgslTagFn/* wgsl */`
 
@@ -44,6 +56,15 @@ export class ProcessHitsKernel extends ComputeKernel {
 				// settings
 				smoothNormals: u32,
 				bounces: u32,
+
+				// environment
+				envMap: texture_2d<f32>,
+				envMapSampler: sampler,
+				envMarginalWeights: texture_2d<f32>,
+				envConditionalWeights: texture_2d<f32>,
+				envTotalSum: f32,
+				envMapRotation: mat3x3f,
+				envMapIntensity: f32,
 
 				globalId: vec3u
 			) -> void {
@@ -54,6 +75,7 @@ export class ProcessHitsKernel extends ComputeKernel {
 
 				let materials = &${ proxy( 'bvhData.value.storage.materials', params ) };
 				let transforms = &${ proxy( 'bvhData.value.storage.transforms', params ) };
+				let envInfo = EnvironmentInfo( envMapRotation, envMapIntensity, 0.0 );
 
 				// skip any rays invocations beyond the ray count
 				let hitQueueCapacity = arrayLength( hitQueue );
@@ -86,7 +108,27 @@ export class ProcessHitsKernel extends ComputeKernel {
 
 				let scatterRec = ${ bsdfSampleFn }( input.view, surface );
 
-				let resultColor = input.resultColor + vec4f( input.throughputColor * surface.emission, 0.0 );
+				var resultColor = input.resultColor + vec4f( input.throughputColor * surface.emission, 0.0 );
+
+				let envSample = ${ sampleEnvironmentDirectionFn }(
+					envMap, envMapSampler, envMarginalWeights, envConditionalWeights,
+					envInfo, envTotalSum, ${ rand2 }( ${ RNG_INDEX_ENVIRONMENT_LIGHT } )
+				);
+				let envBsdf = ${ bsdfEvalFn }( input.view, envSample.direction, surface );
+				let orientedNormal = input.normal * input.side;
+				if ( envSample.pdf > 0.0 && envBsdf.pdf > 0.0 && dot( envSample.direction, orientedNormal ) > 0.0 ) {
+
+					let shadowOrigin = ${ offsetRayOriginFunc }( vertexData.position.xyz, envSample.direction, input.normal );
+					let shadowRay = Ray( shadowOrigin, envSample.direction );
+					var shadowHit: ${ raycastOutput };
+					if ( ! ${ raycastFirstHitFn }( shadowRay, &shadowHit ) ) {
+
+						let misWeight = ${ misHeuristicFn }( envSample.pdf, envBsdf.pdf );
+						resultColor += vec4f( input.throughputColor * envSample.color * envBsdf.color * misWeight / envSample.pdf, 0.0 );
+
+					}
+
+				}
 
 				let isTerminated = input.currentBounce >= bounces || ${ isTerminatingScatterFunc }( scatterRec );
 
@@ -105,6 +147,7 @@ export class ProcessHitsKernel extends ComputeKernel {
 					let index = atomicAdd( &queueSizes[ 1 ], 1 ) % rayQueueCapacity;
 					rayQueue[ index ].origin = ${ offsetRayOriginFunc }( vertexData.position.xyz, scatterRec.direction, input.normal );
 					rayQueue[ index ].direction = scatterRec.direction;
+					rayQueue[ index ].pdf = scatterRec.pdf;
 					rayQueue[ index ].pixel = indexUV;
 					rayQueue[ index ].throughputColor = input.throughputColor * scatterRec.color / scatterRec.pdf;
 					rayQueue[ index ].currentBounce = input.currentBounce + 1;

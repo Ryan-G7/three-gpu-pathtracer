@@ -54,6 +54,9 @@ export class MegaKernelPathTracer extends PathTracerBackend {
 		const { kernel, envInfo } = this;
 		envInfo.updateFrom( envMap );
 		kernel.envMap = envInfo.map;
+		kernel.envMarginalWeights = envInfo.marginalWeights;
+		kernel.envConditionalWeights = envInfo.conditionalWeights;
+		kernel.envTotalSum = envInfo.totalSum;
 		kernel.kernel.computeNode.parameters.envMapSampler.node.value = envInfo.map;
 
 	}

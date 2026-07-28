@@ -6,7 +6,7 @@ export const queuedRayStruct = new StructTypeNode( {
 	seed: 'uint',
 
 	direction: 'vec3f',
-	_alignment0: 'uint',
+	pdf: 'float',
 
 	throughputColor: 'vec3f',
 	currentBounce: 'uint',

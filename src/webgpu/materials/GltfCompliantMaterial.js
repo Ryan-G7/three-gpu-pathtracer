@@ -80,11 +80,11 @@ export class GltfCompliantMaterial extends PathtracingMaterial {
 
 	}
 
-	getBsdfNode() {
+	getBsdfNodes() {
 
-		const bsdfEvalFunc = wgslTagFn/* wgsl */`
+		const bsdfColorFunc = wgslTagFn/* wgsl */`
 
-			fn bsdfEval( ctx: ${ bxdfContextStruct }, surf: ${ surfaceRecordStruct } ) -> vec3f {
+			fn bsdfColor( ctx: ${ bxdfContextStruct }, surf: ${ surfaceRecordStruct } ) -> vec3f {
 
 				// anisotropic roughness along tangent, bitangent
 				let alphaB = surf.roughness * surf.roughness;
@@ -129,7 +129,82 @@ export class GltfCompliantMaterial extends PathtracingMaterial {
 
 		`;
 
-		return wgslTagFn/* wgsl */`
+		const bsdfEvalFunc = wgslTagFn/* wgsl */`
+
+			fn bsdfEval( worldWo: vec3f, worldWi: vec3f, surf: ${ surfaceRecordStruct } ) -> ${ scatterRecordStruct } {
+
+				var result: ${ scatterRecordStruct };
+				result.color = vec3f( 0.0 );
+				result.direction = worldWi;
+				result.pdf = 0.0;
+				result.specularPdf = 0.0;
+
+				let alphaB = surf.roughness * surf.roughness;
+				let alphaT = mix( alphaB, 1.0, surf.anisotropy * surf.anisotropy );
+				let alpha = vec2( alphaT, alphaB );
+				let clearcoatAlpha = surf.clearcoatRoughness * surf.clearcoatRoughness;
+
+				let wo = normalize( surf.normalInvBasis * worldWo );
+				let wi = normalize( surf.normalInvBasis * worldWi );
+				let woClearcoat = normalize( surf.clearcoatInvBasis * worldWo );
+				let wiClearcoat = normalize( surf.clearcoatInvBasis * worldWi );
+				if ( wo.z < 0.0 || woClearcoat.z < 0.0 ) {
+
+					return result;
+
+				}
+
+				let halfVector = wi + wo;
+				let clearcoatHalfVector = wiClearcoat + woClearcoat;
+				if ( length( halfVector ) == 0.0 || length( clearcoatHalfVector ) == 0.0 ) {
+
+					return result;
+
+				}
+
+				let wh = normalize( halfVector );
+				let whClearcoat = normalize( clearcoatHalfVector );
+				let weights = ${ getLobeWeightsFunc }( wo, woClearcoat, vec3( 0, 0, 1 ), ${ CLEARCOAT_IOR }, surf );
+
+				var ctx: ${ bxdfContextStruct };
+				ctx.V = wo;
+				ctx.L = wi;
+				ctx.H = wh;
+				ctx.VdotH = saturate( dot( wo, wh ) );
+				ctx.Vc = woClearcoat;
+				ctx.Lc = wiClearcoat;
+				ctx.Hc = whClearcoat;
+
+				if ( weights.diffuse > 0.0 ) {
+
+					result.pdf += weights.diffuse * max( wi.z, 0.0 ) / PI;
+
+				}
+
+				if ( weights.specular > 0.0 && wi.z > 0.0 ) {
+
+					let pdf = weights.specular * ${ ggxReflectionAdjustedPDFFunc }( wo, wh, alpha );
+					result.pdf += pdf;
+					result.specularPdf += pdf;
+
+				}
+
+				if ( weights.clearcoat > 0.0 && wiClearcoat.z > 0.0 ) {
+
+					let pdf = weights.clearcoat * ${ ggxReflectionAdjustedPDFFunc }( woClearcoat, whClearcoat, vec2( clearcoatAlpha ) );
+					result.pdf += pdf;
+					result.specularPdf += pdf;
+
+				}
+
+				result.color = ${ bsdfColorFunc }( ctx, surf ) * max( 0.0, wi.z );
+				return result;
+
+			}
+
+		`;
+
+		const bsdfSampleFunc = wgslTagFn/* wgsl */`
 
 			fn bsdfSample( worldWo: vec3f, surf: ${ surfaceRecordStruct } ) -> ${ scatterRecordStruct } {
 
@@ -174,33 +249,21 @@ export class GltfCompliantMaterial extends PathtracingMaterial {
 
 				let directionUV = ${ rand2 }( ${ RNG_INDEX_SCATTER_DIRECTION } );
 				var wi: vec3f;
-				var wiClearcoat: vec3f;
-				var wh: vec3f;
-				var whClearcoat: vec3f;
 
 				if ( r <= cdf.x ) { // diffuse
 
 					wi = ${ diffuseDirectionFunc }( wo, directionUV );
-					wh = normalize( wi + wo );
-
-					wiClearcoat = normalize( invClearcoatBasis * normalBasis * wi );
-					whClearcoat = normalize( invClearcoatBasis * normalBasis * wh );
 
 				} else if ( r <= cdf.y ) { // specular
 
-					wh = ${ ggxDirectionFunc }( wo, alpha, directionUV );
+					let wh = ${ ggxDirectionFunc }( wo, alpha, directionUV );
 					wi = - normalize( reflect( wo, wh ) );
-
-					wiClearcoat = normalize( invClearcoatBasis * normalBasis * wi );
-					whClearcoat = normalize( invClearcoatBasis * normalBasis * wh );
 
 				} else if ( r <= cdf.z ) { // clearcoat
 
-					whClearcoat = ${ ggxDirectionFunc }( woClearcoat, vec2( clearcoatAlpha ), directionUV );
-					wiClearcoat = - normalize( reflect( woClearcoat, whClearcoat ) );
-
+					let whClearcoat = ${ ggxDirectionFunc }( woClearcoat, vec2( clearcoatAlpha ), directionUV );
+					let wiClearcoat = - normalize( reflect( woClearcoat, whClearcoat ) );
 					wi = normalize( invBasis * clearcoatBasis * wiClearcoat );
-					wh = normalize( invBasis * clearcoatBasis * whClearcoat );
 
 				} else if ( r <= cdf.w ) { // transmission / refraction
 
@@ -208,44 +271,28 @@ export class GltfCompliantMaterial extends PathtracingMaterial {
 
 				}
 
-				var ctx: ${ bxdfContextStruct };
-				ctx.V = wo;
-				ctx.L = wi;
-				ctx.H = wh;
-
-				ctx.VdotH = saturate( dot( wo, wh ) );
-
-				ctx.Vc = woClearcoat;
-				ctx.Lc = wiClearcoat;
-				ctx.Hc = whClearcoat;
-
-				if ( weights.diffuse > 0.0 ) {
-
-					result.pdf += weights.diffuse * max( wi.z, 0.0 ) / PI;
-
-				}
-
-				if ( weights.specular > 0.0 && wi.z > 0.0 ) {
-
-					result.pdf += weights.specular * ${ ggxReflectionAdjustedPDFFunc }( wo, wh, alpha );
-
-				}
-
-				if ( weights.clearcoat > 0.0 && wiClearcoat.z > 0.0 ) {
-
-					result.pdf += weights.clearcoat * ${ ggxReflectionAdjustedPDFFunc }( woClearcoat, whClearcoat, vec2( clearcoatAlpha ) );
-
-				}
-
-				result.color = ${ bsdfEvalFunc }( ctx, surf );
-				result.color *= max( 0.0, wi.z );
-				result.direction = normalize( normalBasis * wi );
-
+				let worldWi = normalize( normalBasis * wi );
+				result = ${ bsdfEvalFunc }( worldWo, worldWi, surf );
+				result.direction = worldWi;
 				return result;
 
 			}
 
 		`;
+
+		return { sample: bsdfSampleFunc, evaluate: bsdfEvalFunc };
+
+	}
+
+	getBsdfNode() {
+
+		return this.getBsdfNodes().sample;
+
+	}
+
+	getBsdfEvalNode() {
+
+		return this.getBsdfNodes().evaluate;
 
 	}
 

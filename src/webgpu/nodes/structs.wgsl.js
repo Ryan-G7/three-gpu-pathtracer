@@ -208,6 +208,12 @@ export const environmentInfoStruct = new StructTypeNode( {
 	blur: 'float',
 }, 'EnvironmentInfo' );
 
+export const environmentSampleStruct = new StructTypeNode( {
+	color: 'vec3f',
+	direction: 'vec3f',
+	pdf: 'float',
+}, 'EnvironmentSample' );
+
 export const lobeWeightsStruct = new StructTypeNode( {
 	diffuse: 'float',
 	specular: 'float',
