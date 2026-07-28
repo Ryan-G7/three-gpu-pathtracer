@@ -2,6 +2,19 @@ import { wgslFn } from 'three/tsl';
 import { scatterRecordStruct } from './structs.wgsl.js';
 import { wgslTagFn } from 'three-mesh-bvh/webgpu';
 
+export const offsetRayOriginFunc = wgslFn( /* wgsl */ `
+
+	fn offsetRayOrigin( point: vec3f, direction: vec3f, faceNormal: vec3f ) -> vec3f {
+
+		// Scale the offset with the world-space position to account for floating-point precision.
+		let maxPoint = max( max( abs( point.x ), abs( point.y ) ), abs( point.z ) );
+		let offset = select( - faceNormal, faceNormal, dot( direction, faceNormal ) >= 0.0 );
+		return point + offset * ( maxPoint + 1.0 ) * 1e-4;
+
+	}
+
+` );
+
 export const inverseMat3x3Func = wgslFn( /* wgsl */ `
 
 	fn inverse(m: mat3x3f) -> mat3x3f {

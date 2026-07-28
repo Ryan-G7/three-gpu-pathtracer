@@ -4,7 +4,7 @@ import { texture, sampler, uniform, globalId, textureStore } from 'three/tsl';
 import { rngInit, rngNextBounce, rand2, RNG_INDEX_RAY_JITTER, RNG_INDEX_ENVIRONMENT_SAMPLE } from '../nodes/random.wgsl.js';
 import { sampleEnvironmentFn, weightedAlphaBlendFn } from '../nodes/sampling.wgsl.js';
 import { proxy, proxyFn, wgslTagFn } from 'three-mesh-bvh/webgpu';
-import { isTerminatingScatterFunc } from '../nodes/utils.wgsl.js';
+import { isTerminatingScatterFunc, offsetRayOriginFunc } from '../nodes/utils.wgsl.js';
 
 export class PathTracerMegaKernel extends ComputeKernel {
 
@@ -151,10 +151,7 @@ export class PathTracerMegaKernel extends ComputeKernel {
 						throughputColor *= scatterRec.color;
 						throughputColor /= scatterRec.pdf;
 
-						// TODO: Investigate offsetting this position to not self-intersect multiple times
-						// Adding + scatterRec.direction * 1e-1 seems to fix almost all the fireflies
-						// However that seems like a very large distance to offset
-						ray.origin = vertexData.position.xyz;
+						ray.origin = ${ offsetRayOriginFunc }( vertexData.position.xyz, scatterRec.direction, hitResult.normal );
 						ray.direction = scatterRec.direction;
 
 					} else {
