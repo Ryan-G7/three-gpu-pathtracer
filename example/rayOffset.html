@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Ray Origin Offset Scale Test</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<style>
+		html, body { margin: 0; overflow: hidden; background: #222; }
+		#status { position: fixed; top: 12px; left: 12px; color: white; font: 14px monospace; }
+		#labels { position: fixed; left: 19%; right: 19%; bottom: 16%; display: flex; justify-content: space-between; color: white; font: 14px monospace; }
+	</style>
+</head>
+<body>
+<div id="status">Starting...</div>
+<div id="labels"><span>scale 1e-4</span><span>scale 1</span><span>scale 1e4</span></div>
+<script src="./ray_offset_test.js" type="module"></script>
+</body>
+</html>
